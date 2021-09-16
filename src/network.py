@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.ops import GCN, GraphUnet, Initializer, norm_g
+from utils.ops_jaccweights import GCN, GraphUnet, Initializer, norm_g
 
 
 class GNet(nn.Module):
@@ -18,23 +18,23 @@ class GNet(nn.Module):
         self.out_drop = nn.Dropout(p=args.drop_c)
         Initializer.weights_init(self)
 
-    def forward(self, gs, hs, labels):
-        hs = self.embed(gs, hs)
+    def forward(self, gs, hs, labels, jaccWeight,jaccOppWeight):
+        hs = self.embed(gs, hs, jaccWeight,jaccOppWeight)
         logits = self.classify(hs)
         return self.metric(logits, labels)
 
-    def embed(self, gs, hs):
+    def embed(self, gs, hs,jaccWeight,jaccOppWeight):
         o_hs = []
         for g, h in zip(gs, hs):
-            h = self.embed_one(g, h)
+            h = self.embed_one(g, h,jaccWeight,jaccOppWeight)
             o_hs.append(h)
         hs = torch.stack(o_hs, 0)
         return hs
 
-    def embed_one(self, g, h):
+    def embed_one(self, g, h, jaccWeight,jaccOppWeight):
         g = norm_g(g)
         h = self.s_gcn(g, h)
-        hs = self.g_unet(g, h)
+        hs = self.g_unet(g, h, jaccWeight,jaccOppWeight)
         h = self.readout(hs)
         return h
 

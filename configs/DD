@@ -1,4 +1,4 @@
-num_epochs=200
+num_epochs=50
 batch_size=32
 learning_rate=0.001
 deg_as_tag=0

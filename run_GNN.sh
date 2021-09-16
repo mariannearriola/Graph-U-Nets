@@ -1,5 +1,5 @@
 #!/bin/bash
-DATA="${1-DD}"
+DATA="${1-PROTEINS}"
 fold=${2-1}  # 0 for 10-fold
 GPU=${3-0}
 
@@ -19,7 +19,7 @@ if [ ! -d "$FOLDER" ]; then
 fi
 
 run(){
-    CUDA_VISIBLE_DEVICES=${GPU} python3 src/main.py \
+    CUDA_VISIBLE_DEVICES=${GPU} python src/main.py \
         -seed $seed -data $DATA -fold $1 -num_epochs $num_epochs \
         -batch $batch_size -lr $learning_rate -deg_as_tag $deg_as_tag \
         -l_num $layer_num -h_dim $hidden_dim -l_dim $layer_dim \

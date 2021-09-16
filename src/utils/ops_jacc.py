@@ -32,9 +32,7 @@ class GraphUnet(nn.Module):
             down_outs.append(h)
             g, h, idx = self.pools[i](g, h)
             indices_list.append(idx)
-            #hs.append(h)
         h = self.bottom_gcn(g, h)
-        #hs.append(h)
         for i in range(self.l_n):
             up_idx = self.l_n - i - 1
             g, idx = adj_ms[up_idx], indices_list[up_idx]
@@ -72,11 +70,39 @@ class Pool(nn.Module):
         self.proj = nn.Linear(in_dim, 1)
         self.drop = nn.Dropout(p=p) if p > 0 else nn.Identity()
 
-    def forward(self, g, h, jaccWeight):
+    def forward(self, g, h):
         Z = self.drop(h)
-        weights = self.proj(Z).squeeze()
-        scores = self.sigmoid(weights)
-        return top_k_graph(scores, g, h, self.k)
+        # find jaccard coefficients for every node in z
+        zlist = Z.tolist()
+        num_nodes = g.shape[0]
+        # store jaccard coefficient for every u,v pair
+        jaccscores = [0] * num_nodes
+
+       #print("finding jaccard coefficients")
+        jacc = [0] * num_nodes
+        for j in range(len(jacc)):
+            jacc[j] = [0] * num_nodes
+        for u in range(len(zlist)):
+            for v in range(len(zlist)):
+                if u != v:
+                    jacc[u][v] = calcJaccard(Z,u,v)
+
+        #print("ranking")
+        nodes = []
+        for k in range(int(self.k * num_nodes)):
+            # find largest value in jacc
+            maxjacc = float('-inf')
+            uind = -1
+            for u in range(len(jacc)):
+                if u in nodes: continue
+                if max(jacc[u]) > maxjacc:
+                    maxjacc = max(jacc[u])
+                    uind = u
+            nodes.append(uind)
+        for n in nodes:
+            jaccscores[n] = 1
+        jaccscores = torch.FloatTensor(jaccscores)
+        return top_k_graph(jaccscores, g, h, self.k)
 
 
 class Unpool(nn.Module):
@@ -89,7 +115,22 @@ class Unpool(nn.Module):
         new_h[idx] = h
         return g, new_h
 
+# to find # of neighbors, take # of non-zero elements for corresponding row in adjacency matrix
+def calcJaccard(g,idxu,idxv):
+    nu,nv = g[idxu].tolist(), g[idxv].tolist()
+    if max(nu) == 0 and max(nv) == 0:
+        return 0
+    intr, uni = 0, 0
+    for i in range(len(nu)):
+        # if neighbor is shared
+        if nu[i] != 0 and nv[i] != 0:
+            intr = intr + 1
+        # if at least one of the nodes has a neighbor
+        if nu[i] != 0 or nv[i] != 0:
+            uni = uni + 1
+    return intr/uni
 
+# to change
 def top_k_graph(scores, g, h, k):
     num_nodes = g.shape[0]
     values, idx = torch.topk(scores, max(2, int(k*num_nodes)))

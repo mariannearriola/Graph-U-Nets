@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-
 class GraphUnet(nn.Module):
 
     def __init__(self, ks, in_dim, out_dim, dim, act, drop_p):
@@ -13,28 +12,36 @@ class GraphUnet(nn.Module):
         self.up_gcns = nn.ModuleList()
         self.pools = nn.ModuleList()
         self.unpools = nn.ModuleList()
+
+        # for each pooling layer
         self.l_n = len(ks)
         for i in range(self.l_n):
+            # try different weights...?
             self.down_gcns.append(GCN(dim, dim, act, drop_p))
             self.up_gcns.append(GCN(dim, dim, act, drop_p))
             self.pools.append(Pool(ks[i], dim, drop_p))
             self.unpools.append(Unpool(dim, dim, drop_p))
 
-    def forward(self, g, h):
+    # encoder-decoder architecture
+    def forward(self, g, h, jaccWeight,jaccOppWeight):
         adj_ms = []
         indices_list = []
         down_outs = []
         hs = []
         org_h = h
+
+        # pool
         for i in range(self.l_n):
             h = self.down_gcns[i](g, h)
             adj_ms.append(g)
             down_outs.append(h)
-            g, h, idx = self.pools[i](g, h)
+            g, h, idx = self.pools[i](g, h, jaccWeight,jaccOppWeight)
             indices_list.append(idx)
-            #hs.append(h)
+
+        # gcn
         h = self.bottom_gcn(g, h)
-        #hs.append(h)
+
+        # unpool
         for i in range(self.l_n):
             up_idx = self.l_n - i - 1
             g, idx = adj_ms[up_idx], indices_list[up_idx]
@@ -72,11 +79,47 @@ class Pool(nn.Module):
         self.proj = nn.Linear(in_dim, 1)
         self.drop = nn.Dropout(p=p) if p > 0 else nn.Identity()
 
-    def forward(self, g, h, jaccWeight):
+    def forward(self, g, h, jaccWeight,jaccOppWeight):
         Z = self.drop(h)
+        # find jaccard coefficients for every node in z
+        zlist = Z.tolist()
+        num_nodes = g.shape[0]
+        # store jaccard coefficient for every u,v pair
+        jaccscores = [jaccOppWeight] * num_nodes
+
+        #print("finding jaccard coefficients")
+        jacc = [0] * num_nodes
+        for j in range(len(jacc)):
+            jacc[j] = [0] * num_nodes
+        for u in range(len(zlist)):
+            for v in range(len(zlist)):
+                if u != v:
+                    jacc[u][v] = calcJaccard(Z,u,v)
+
+
+        #print("ranking")
+        nodes = []
+        for k in range(int(self.k * num_nodes)):
+            # find largest value in jacc
+            minjacc = float('inf')
+            uind = -1
+            for u in range(len(jacc)):
+                if u in nodes: continue
+                if min(jacc[u]) < minjacc:
+                    minjacc = min(jacc[u])
+                    uind = u
+            nodes.append(uind)
+        for n in nodes: jaccscores[n] = jaccWeight
+
+        # projection
         weights = self.proj(Z).squeeze()
-        scores = self.sigmoid(weights)
-        return top_k_graph(scores, g, h, self.k)
+        scores = weights
+
+        scores = scores.tolist()
+        newscores = [a*b for a,b in zip(jaccscores,scores)]
+        newscores = torch.FloatTensor(newscores)
+        newscores = self.sigmoid(newscores)
+        return top_k_graph(newscores, g, h, self.k)
 
 
 class Unpool(nn.Module):
@@ -89,7 +132,22 @@ class Unpool(nn.Module):
         new_h[idx] = h
         return g, new_h
 
+# to find # of neighbors, take # of non-zero elements for corresponding row in adjacency matrix
+def calcJaccard(g,idxu,idxv):
+    nu,nv = g[idxu].tolist(), g[idxv].tolist()
+    if max(nu) == 0 and max(nv) == 0:
+        return 1
+    intr, uni = 0, 0
+    for i in range(len(nu)):
+        # if neighbor is shared
+        if nu[i] != 0 and nv[i] != 0:
+            intr = intr + 1
+        # if at least one of the nodes has a neighbor
+        if nu[i] != 0 or nv[i] != 0:
+            uni = uni + 1
+    return intr/uni
 
+# to change
 def top_k_graph(scores, g, h, k):
     num_nodes = g.shape[0]
     values, idx = torch.topk(scores, max(2, int(k*num_nodes)))
